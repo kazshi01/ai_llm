@@ -1,6 +1,44 @@
 import streamlit as st
 from openai import OpenAI
+import chromadb
+from docx import Document
+import requests
 
+# ベクトルDBセットアップ
+DB_DIR = "./chroma_db"
+chroma_client = chromadb.PersistentClient(path=DB_DIR)
+
+if "collection" not in st.session_state:
+  st.session_state.collection = chroma_client.get_or_create_collection(
+    name = "local_docs"
+  )
+
+# Wordファイルを読み込む関数
+def load_word_document(file):
+  return "\n".join(para.text for para in Document(file).paragraphs)
+
+# テキスト分割関数
+def split_text(text):
+  chunk_size = 200
+  overlap = 50
+  chunks = []
+  start = 0
+  while start < len(text):
+    end = start + chunk_size
+    chunks.append(text[start:end])
+    start += chunk_size - overlap
+  return chunks
+
+# テキストをベクトル化する関数
+def ollama_embed(text):
+  r = requests.post(
+    "http://localhost:12000/api/embeddings",
+    json = {"model": "nomic-embed-text:v1.5", "prompt": text}
+  )
+  data = r.json()
+  return data["embedding"]
+
+# streamlitの設定
 st.set_page_config(page_title="Local LLM Chat")
 
 st.sidebar.title("設定")
@@ -11,6 +49,29 @@ system_prompt = st.sidebar.text_area(
   "あなたは有能なアシスタントです。日本語で回答してください",
 )
 
+## ファイルアップロード
+upload_files = st.sidebar.file_uploader(
+  "Wordファイルをアップロード(.docx)",
+  type = ["docx"],
+  accept_multiple_files = True
+)
+
+## インデックス作成
+if st.sidebar.button("インデックス作成"):
+  for file in upload_files:
+    text = load_word_document(file)
+    chunks = split_text(text)
+    for i, chunk in enumerate(chunks):
+      embed = ollama_embed(chunk)
+      st.session_state.collection.add(
+        documents = [chunk],
+        embeddings = [embed],
+        ids = [f"{file.name}_{i}"]
+      )
+  st.sidebar.success("インデックス作成完了")
+
+
+# state管理（会話履歴の保持）
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
@@ -23,30 +84,50 @@ for m in st.session_state.messages:
 
 prompt = st.chat_input("メッセージを入力")
 
-if prompt:
-  client = OpenAI(
-    api_key="ollama",
-    base_url="http://localhost:12000/v1"
+client = OpenAI(
+    api_key = "ollama",
+    base_url = "http://localhost:12000/v1"
   )
 
-  st.session_state.messages.append({"role": "user", "content": prompt})
+# LLMへの問い合わせ処理
+if prompt:
 
   with st.chat_message("user"):
     st.write(prompt)
 
-  if system_prompt.strip():
-    messages = [{"role": "system_prompt", "content": system_prompt}] + st.session_state.messages
+  ## RAG検索
+  query_embed = ollama_embed(prompt)
+  results = st.session_state.collection.query(
+    query_embeddings = [query_embed],
+    n_results = 2
+  )
+
+  if results["documents"]:
+    context_text = "\n".join(results["documents"][0])
+    rag_prompt = f"""
+    以下は関連ドキュメントの抜粋です。
+    {context_text}
+    この情報を参考に以下の質問に答えてください。
+    {prompt}
+    """
   else:
-    messages = st.session_state.messages
+    rag_prompt = ""
+
+  st.session_state.messages.append({"role": "user", "content": prompt})
+
+  if system_prompt.strip():
+    messages = [{"role": "system", "content": f"{system_prompt}\n\n{rag_prompt}" if rag_prompt else system_prompt}] + st.session_state.messages
+  else:
+    messages = [{"role": "system", "content": rag_prompt}] + st.session_state.messages
 
   with st.chat_message("assistant"):
     placeholder = st.empty()
     stream_response = ""
     stream = client.chat.completions.create(
-      model=model,
-      messages=messages,
-      temperature=temperature,
-      stream=True
+      model = model,
+      messages = messages,
+      temperature = temperature,
+      stream = True
     )
 
     for chunk in stream:

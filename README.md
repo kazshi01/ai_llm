@@ -1,3 +1,13 @@
+## 使用ライブラリ
+
+| ライブラリ名 | バージョン | 用途 |
+|------------|----------|------|
+| streamlit | 1.51.0 | Webアプリケーションフレームワーク |
+| openai | 2.8.1 | OpenAI APIクライアント（Ollama用） |
+| chromadb | 1.3.5 | ベクトルデータベース |
+| python-docx | 1.2.0 | Wordファイル（.docx）の読み込み |
+| requests | 2.32.5 | HTTPリクエスト（Ollama API呼び出し） |
+
 ## python 仮想環境
 
 #### myenv　有効化
