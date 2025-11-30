@@ -24,7 +24,7 @@ def split_text(text):
     chunks = []
     start = 0
     
-    # ここで separators を宣言しています
+    # ここで separators を宣言する
     separators = ["\n\n", "\n", "。", "、", " ", ""]
     
     while start < len(text):
